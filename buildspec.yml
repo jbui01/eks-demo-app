@@ -1,0 +1,50 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_REGION: "us-east-1"
+    EKS_CLUSTER_NAME: "demo-cluster"
+    IMAGE_REPO_NAME: "eks-demo-app"
+
+phases:
+  install:
+    runtime-versions:
+      docker: 20
+    commands:
+      - curl -o kubectl https://amazon-eks.s3.us-west-2.amazonaws.com/1.28.0/2023-08-16/bin/linux/amd64/kubectl
+      - chmod +x ./kubectl && mv ./kubectl /usr/local/bin/
+      - aws --version
+
+  pre_build:
+    commands:
+      - echo Logging into Amazon ECR...
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+      - REPO_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_REPO_NAME
+      - npm test
+
+  build:
+    commands:
+      - echo Building Docker image...
+      - docker build -t $REPO_URI:$IMAGE_TAG .
+      - docker tag $REPO_URI:$IMAGE_TAG $REPO_URI:latest
+
+  post_build:
+    commands:
+      - echo Pushing image to ECR...
+      - docker push $REPO_URI:$IMAGE_TAG
+      - docker push $REPO_URI:latest
+      - echo Updating kubeconfig...
+      - aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER_NAME
+      - echo Deploying to EKS...
+      - |
+        sed -i "s|IMAGE_PLACEHOLDER|$REPO_URI:$IMAGE_TAG|g" k8s/deployment.yaml
+      - kubectl apply -f k8s/
+      - kubectl rollout status deployment/demo-app -n demo
+      - echo Writing image definitions...
+      - printf '[{"name":"demo-app","imageUri":"%s"}]' $REPO_URI:$IMAGE_TAG > imagedefinitions.json
+
+artifacts:
+  files:
+    - imagedefinitions.json
