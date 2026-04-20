@@ -8,16 +8,12 @@ env:
 
 phases:
   install:
-    runtime-versions:
-      docker: 20
     commands:
       - curl -o kubectl https://s3.us-west-2.amazonaws.com/amazon-eks/1.32.0/2024-12-20/bin/linux/amd64/kubectl
       - chmod +x ./kubectl && mv ./kubectl /usr/local/bin/
-      - aws --version
 
   pre_build:
     commands:
-      - echo Logging into Amazon ECR...
       - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
       - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
       - IMAGE_TAG=${COMMIT_HASH:=latest}
@@ -42,7 +38,6 @@ phases:
         sed -i "s|IMAGE_PLACEHOLDER|$REPO_URI:$IMAGE_TAG|g" k8s/deployment.yaml
       - kubectl apply -f k8s/
       - kubectl rollout status deployment/demo-app -n demo
-      - echo Writing image definitions...
       - printf '[{"name":"demo-app","imageUri":"%s"}]' $REPO_URI:$IMAGE_TAG > imagedefinitions.json
 
 artifacts:
